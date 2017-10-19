@@ -91,7 +91,16 @@ class WFLock(object):
                 links_dict = self.lp.workflows.find_one_and_update(
                     {'nodes': self.fw_id, 'locked': {"$exists": False}}, {'$set': {'locked': True}})
 
+        self.lp.workflows.find_one_and_update(
+            {'nodes': self.fw_id},
+            {'$push': {'lock_acquired': (self.fw_id, datetime.datetime.utcnow())}}
+        )
+
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self.lp.workflows.find_one_and_update(
+            {'nodes': self.fw_id},
+            {'$push': {'lock_released': (self.fw_id, datetime.datetime.utcnow())}}
+        )
         self.lp.workflows.find_one_and_update({"nodes": self.fw_id}, {"$unset": {"locked": True}})
 
 
@@ -1319,7 +1328,7 @@ class LaunchPad(FWSerializable):
                                               "fw_id": {"$ne": fw_id}}, {"fw_id": 1}):
                     duplicates.append(d['fw_id'])
             duplicates = list(set(duplicates))
-        
+
         # Launch recovery
         if recover_launch is not None:
             recovery = self.get_recovery(fw_id, recover_launch)
@@ -1327,9 +1336,9 @@ class LaunchPad(FWSerializable):
             set_spec = {'$set': {'spec._recovery': recovery}}
             if recover_mode == 'prev_dir':
                 prev_dir = self.get_launch_by_id(recovery.get('_launch_id')).launch_dir
-                set_spec['$set']['spec._launch_dir'] = prev_dir 
+                set_spec['$set']['spec._launch_dir'] = prev_dir
             self.fireworks.find_one_and_update({"fw_id": fw_id}, set_spec)
-            
+
         # If no launch recovery specified, unset the firework recovery spec
         else:
             set_spec = {"$unset":{"spec._recover_launch":""}}
@@ -1355,7 +1364,7 @@ class LaunchPad(FWSerializable):
             r = self.rerun_fw(f, rerun_duplicates=False, recover_launch=recover_launch,
                               recover_mode=recover_mode)
             reruns.extend(r)
-        
+
         return reruns
 
     def get_recovery(self, fw_id, launch_id='last'):
@@ -1540,7 +1549,7 @@ class LaunchPad(FWSerializable):
                                                             })
                     if f:
                         self._refresh_wf(fw_id)
-                
+
                 if 'checkpoint' in offline_data:
                     m_launch.touch_history(checkpoint=offline_data['checkpoint'])
                     self.launches.find_one_and_replace({'launch_id': m_launch.launch_id},
