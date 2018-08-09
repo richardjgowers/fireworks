@@ -114,6 +114,7 @@ class Rocket:
         fw_id (int): id of a specific Firework to run (quit if it cannot be found)
         """
         self.launchpad = launchpad
+        self.launchpad.keep_connection_closed = True
         self.fworker = fworker
         self.fw_id = fw_id
 

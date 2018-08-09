@@ -10,6 +10,7 @@ The LaunchPad manages the FireWorks database.
 """
 
 import datetime
+from functools import wraps
 import json
 import os
 import random
@@ -101,6 +102,18 @@ class WFLock(object):
         self.lp.workflows.find_one_and_update({"nodes": self.fw_id}, {"$unset": {"locked": True}})
 
 
+def connection_close(func):
+    """Decorator to close MongoDB connection after transactions"""
+    @wraps(func)
+    def inner(self, *args, **kwargs):
+        ret = func(self, *args, **kwargs)
+        if self.keep_connection_closed:
+            self.connection.close()
+        return ret
+
+    return inner
+
+
 class LaunchPad(FWSerializable):
     """
     The LaunchPad manages the FireWorks database.
@@ -108,7 +121,8 @@ class LaunchPad(FWSerializable):
 
     def __init__(self, host='localhost', port=27017, name='fireworks', username=None, password=None,
                  logdir=None, strm_lvl=None, user_indices=None, wf_user_indices=None, ssl=False,
-                 ssl_ca_certs=None, ssl_certfile=None, ssl_keyfile=None, ssl_pem_passphrase=None):
+                 ssl_ca_certs=None, ssl_certfile=None, ssl_keyfile=None, ssl_pem_passphrase=None,
+                 keep_connection_closed=False):
         """
         Args:
             host (str): hostname
@@ -125,6 +139,7 @@ class LaunchPad(FWSerializable):
             ssl_certfile (str): path to the client certificate to be used for mongodb connection
             ssl_keyfile (str): path to the client private key
             ssl_pem_passphrase (str): passphrase for the client private key
+            keep_connection_closed (bool): close MongoDB connection after each transaction
         """
         self.host = host
         self.port = port
@@ -150,6 +165,7 @@ class LaunchPad(FWSerializable):
             ssl_ca_certs=self.ssl_ca_certs, ssl_certfile=self.ssl_certfile,
             ssl_keyfile=self.ssl_keyfile, ssl_pem_passphrase=self.ssl_pem_passphrase,
             socketTimeoutMS=MONGO_SOCKET_TIMEOUT_MS, connect=False)
+        self.keep_connection_closed = keep_connection_closed
         self.db = self.connection[name]
         if username:
             self.db.authenticate(username, password)
@@ -1155,6 +1171,7 @@ class LaunchPad(FWSerializable):
         m_launch.set_reservation_id(reservation_id)
         self.launches.find_one_and_replace({'launch_id': launch_id}, m_launch.to_db_dict())
 
+    @connection_close
     def checkout_fw(self, fworker, launch_dir, fw_id=None, host=None, ip=None, state="RUNNING"):
         """
         Checkout the next ready firework, mark it with the given state(RESERVED or RUNNING) and
@@ -1225,6 +1242,7 @@ class LaunchPad(FWSerializable):
 
         return m_fw, launch_id
 
+    @connection_close
     def change_launch_dir(self, launch_id, launch_dir):
         """
         Change the launch directory corresponding to the given launch id.
@@ -1237,6 +1255,7 @@ class LaunchPad(FWSerializable):
         m_launch.launch_dir = launch_dir
         self.launches.find_one_and_replace({'launch_id': m_launch.launch_id}, m_launch.to_db_dict(), upsert=True)
 
+    @connection_close
     def restore_backup_data(self, launch_id, fw_id):
         """
         For the given launch id and firework id, restore the back up data.
@@ -1246,6 +1265,7 @@ class LaunchPad(FWSerializable):
         if fw_id in self.backup_fw_data:
             self.fireworks.find_one_and_replace({'fw_id': fw_id}, self.backup_fw_data[fw_id])
 
+    @connection_close
     def complete_launch(self, launch_id, action=None, state='COMPLETED'):
         """
         Internal method used to mark a Firework's Launch as completed.
@@ -1275,6 +1295,7 @@ class LaunchPad(FWSerializable):
         # change return type to dict to make return type serializable to support job packing
         return m_launch.to_dict()
 
+    @connection_close
     def ping_launch(self, launch_id, ptime=None, checkpoint=None):
         """
         Ping that a Launch is still alive: updates the 'update_on 'field of the state history of a
